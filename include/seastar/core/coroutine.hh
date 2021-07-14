@@ -31,6 +31,18 @@
 
 namespace seastar {
 
+namespace coroutine {
+
+// A wrapper for propagating an exception in a coroutine without throwing.
+// Usage:
+// co_return coroutine::exception(std::current_exception());
+struct exception {
+    std::exception_ptr eptr;
+    explicit exception(std::exception_ptr eptr) : eptr(eptr) {}
+};
+
+}
+
 namespace internal {
 
 template <typename T = void>
@@ -48,6 +60,10 @@ public:
             _promise.set_value(std::forward<U>(value)...);
         }
 
+        void return_value(coroutine::exception ce) noexcept {
+            _promise.set_exception(ce.eptr);
+        }
+
         [[deprecated("Forwarding coroutine returns are deprecated as too dangerous. Use 'co_return co_await ...' until explicit syntax is available.")]]
         void return_value(future<T>&& fut) noexcept {
             fut.forward_to(std::move(_promise));
@@ -55,6 +71,10 @@ public:
 
         void unhandled_exception() noexcept {
             _promise.set_exception(std::current_exception());
+        }
+
+        void set_exception(std::exception_ptr eptr) noexcept {
+            _promise.set_exception(eptr);
         }
 
         seastar::future<T> get_return_object() noexcept {
@@ -89,6 +109,10 @@ public:
 
         void unhandled_exception() noexcept {
             _promise.set_exception(std::current_exception());
+        }
+
+        void set_exception(std::exception_ptr eptr) noexcept {
+            _promise.set_exception(eptr);
         }
 
         seastar::future<> get_return_object() noexcept {
@@ -182,11 +206,35 @@ public:
     void await_resume() { _future.get(); }
 };
 
+struct exception_propagator {
+    std::exception_ptr _eptr;
+public:
+    explicit exception_propagator(std::exception_ptr eptr) noexcept : _eptr(eptr) { }
+
+    exception_propagator(const exception_propagator&) = delete;
+    exception_propagator(exception_propagator&&) = delete;
+
+    bool await_ready() const noexcept { return false; }
+
+    template<typename U>
+    bool await_suspend(SEASTAR_INTERNAL_COROUTINE_NAMESPACE::coroutine_handle<U> hndl) noexcept {
+        hndl.promise().set_exception(_eptr);
+        // Never suspend, we only needed the coroutine handle to access the promise underneath
+        return false;
+    }
+
+    void await_resume() { }
+};
+
 } // seastar::internal
 
 template<typename... T>
 auto operator co_await(future<T...> f) noexcept {
     return internal::awaiter<T...>(std::move(f));
+}
+
+auto operator co_await(coroutine::exception ce) noexcept {
+    return internal::exception_propagator(ce.eptr);
 }
 
 } // seastar

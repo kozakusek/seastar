@@ -170,4 +170,25 @@ SEASTAR_TEST_CASE(test_preemption) {
     BOOST_REQUIRE(save_x);
     co_return;
 }
+
+SEASTAR_TEST_CASE(test_coroutine_exception) {
+    auto i_am_exceptional = [] () -> future<int> {
+        co_return coroutine::exception(std::make_exception_ptr(std::runtime_error("threw")));
+    };
+    BOOST_REQUIRE_THROW(co_await i_am_exceptional(), std::runtime_error);
+    co_await i_am_exceptional().then_wrapped([] (future<int> f) {
+        BOOST_REQUIRE(f.failed());
+        BOOST_REQUIRE_THROW(std::rethrow_exception(f.get_exception()), std::runtime_error);
+    });
+
+    auto i_am_exceptional_too = [] () -> future<> {
+        co_await coroutine::exception(std::make_exception_ptr(std::logic_error("threw again")));
+    };
+    BOOST_REQUIRE_THROW(co_await i_am_exceptional_too(), std::logic_error);
+    co_await i_am_exceptional_too().then_wrapped([] (future<> f) {
+        BOOST_REQUIRE(f.failed());
+        BOOST_REQUIRE_THROW(std::rethrow_exception(f.get_exception()), std::logic_error);
+    });
+}
+
 #endif
